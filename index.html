@@ -48,7 +48,7 @@
         }
     }
 
-    function setSigninStatus(isSignedIn) {
+    async function setSigninStatus(isSignedIn) {
         var user = GoogleAuth.currentUser.get();
         var isAuthorized = user.hasGrantedScopes(SCOPE);
         if (isAuthorized) {
@@ -57,8 +57,10 @@
             $('#sign-in-or-out-button').html('Sign In');
         }
 
-        console.log("get subscriptions:");
-        get_subscriptions();
+        await get_subscriptions();
+
+        await myTests();
+
     }
 
     function updateSigninStatus(isSignedIn) {
@@ -66,71 +68,140 @@
     }
 
 
-    function get_uploads(pid) {
+    async function get_uploads(pid, typeEl) {
         var rq = {
             part: 'snippet,contentDetails',
             playlistId: pid,
             maxResults: 50
         };
         
-        var request = gapi.client.youtube.playlistItems.list(rq);
-        
-        request.execute(function(response) {
-            var itm = response.items[0];
-            // Prepare clickable HTML snippet:			
-            var thumb = itm.snippet.thumbnails.medium;
-            var link = "<a href='https://www.youtube.com/watch?v=" 
-                + itm.snippet.resourceId.videoId + "' target='_blank'>";
-            var img = "<img src='" + thumb.url + "' width=" + thumb.width 
-                + " height=" + thumb.height + ">";
-            var end_link = "</a>";
-            // Add it to results div content:
-            $('#results').append(link + img + end_link);
-        });
+        var response = await gapi.client.youtube.playlistItems.list(rq);
+        var itm = response.result.items[0];
+        console.log("Channel Name: ", itm.snippet.channelTitle);
+        // Prepare clickable HTML snippet:			
+        var thumb = itm.snippet.thumbnails.medium;
+        var link = "<a href='https://www.youtube.com/watch?v=" 
+            + itm.snippet.resourceId.videoId + "' target='_blank'>";
+        var img = "<img src='" + thumb.url + "' width=" + thumb.width 
+            + " height=" + thumb.height + ">";
+        var end_link = "</a>";
+        // Add it to results div content:
+        (typeEl === "search") ? $('#search').append(link + img + end_link) :
+                                $('#results').append(link + img + end_link);
+
     }
 
 
-    function get_channel(cid) {
-        var request = gapi.client.youtube.channels.list({
+    async function get_channel(cid, typeEl) {
+        var response = await gapi.client.youtube.channels.list({
             part: 'snippet,contentDetails,statistics',
             id: cid
         });
-        request.execute(function(response) {
-            var channels = response.items;
-            // console.log(channels[0].snippet.title);
-            get_uploads(channels[0].contentDetails.relatedPlaylists.uploads);
-        });
+
+            var channels = response.result.items;
+            await get_uploads(channels[0].contentDetails.relatedPlaylists.uploads, typeEl);
     }
 
-    function get_subscriptions(token) {
-    var rq = {
-        part: 'id,contentDetails,subscriberSnippet,snippet',
-        mine: true,
-        maxResults: 50
-    };
-    if (token) { // If we got a token from previous call
-        rq.pageToken = token; // .. attach it to the new request
-    }
-    var request = gapi.client.youtube.subscriptions.list(rq);
-    
-    request.execute(function(response) {
-        for (var i = 0; i < response.items.length; i++) {
-            var itm = response.items[i];
-            var cid = itm.snippet.resourceId.channelId;
-            get_channel(cid);
+    async function get_subscriptions(token) {
+        var rq = {
+            part: 'id,contentDetails,subscriberSnippet,snippet',
+            mine: true,
+            maxResults: 50
+        };
+        if (token) { // If we got a token from previous call
+            rq.pageToken = token; // .. attach it to the new request
         }
+        var res = await gapi.client.youtube.subscriptions.list(rq);
         
-        var next = response.nextPageToken; // get token for next page
+        console.log("My subscriptions:");
+        for (var i = 0; i < res.result.items.length; i++) {
+            var itm = res.result.items[i];
+            var cid = itm.snippet.resourceId.channelId;
+            await get_channel(cid);
+        }
+
+        var next = res.result.nextPageToken; // get token for next page
         if (next) { // if has next
             get_subscriptions(next); // recurse with the new token
         }
-    });
 
-}
+    }
+
+    async function myTests() {
+        console.log("==================== MY TESTS ====================");
+
+        var rq = {
+            part: 'id,contentDetails,subscriberSnippet,snippet',
+            mine: true,
+            maxResults: 50
+        };
+        
+        const resp = await gapi.client.youtube.subscriptions.list(rq);
+
+        // 1. Number of subscriptions are 2
+        console.log("TEST 1:");
+        console.log("Expected: Num of subscriptions = 2");
+        const num_of_sbscr = resp.result.items.length;
+        console.log("Actual: Num of subscriptions is = ",num_of_sbscr);
+        (num_of_sbscr === 2) ? console.log("PASS") : console.log("FAIL");
+        console.log("==============================================");
+        
+        // 2. Testing the status code
+        console.log("TEST 2:");
+        console.log("Expected: Status code = 200");
+        const status = await statusOfSearch();
+        console.log("Actual: Status code is = ",status);
+        (status === 200) ? console.log("PASS") : console.log("FAIL");
+        console.log("==============================================");
+
+        // 3. Name of the first channel is correct
+        console.log("TEST 3:");
+        console.log("Expected: Name of the first channel = Fun Fun Function");
+        const name = resp.result.items[0].snippet.title;
+        console.log("Actual: Name of the first channel is = ",name);
+        (name === "Fun Fun Function") ? console.log("PASS") : console.log("FAIL");
+        console.log("==============================================");
+
+        // 4. 3 thumbnails are returned in each channel
+        console.log("TEST 4:");
+        console.log("Expected: 3 thumbnails are existing in both channels");
+        const firstChan = resp.result.items[0];
+        const secondChan = resp.result.items[1];
+        console.log("Actual:");
+        (is3Thumbnails(firstChan) && is3Thumbnails(secondChan)) ? console.log("PASS") : console.log("FAIL");
+        console.log("==============================================");
+    }
+
+    function is3Thumbnails(channel) {
+        let thumbsArr = [];
+        const url1 = channel.snippet.thumbnails.default.url;
+        const url2 = channel.snippet.thumbnails.high.url;
+        const url3 = channel.snippet.thumbnails.medium.url;
+        thumbsArr.push(url1, url2, url3);
+        console.log("thumbnails array : ", thumbsArr);
+        return !(thumbsArr.includes("") || thumbsArr.includes(null));
+    }
+
+    async function statusOfSearch() {
+        const res = await gapi.client.youtube.search.list({
+            part: 'id,snippet',
+            q: 'we are the champions',
+        });
+        var cid = res.result.items[0].snippet.channelId;
+        await get_channel(cid, "search");
+
+        return res.status;
+    }
+
+    
+
 </script>
 
 <button id="sign-in-or-out-button">Sign In</button>
+<h1>First videos of my subscriptions:</h1>
 <div id="results"></div>
+<h1>Search result:</h1>
+<div id="search"></div>
 
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.3/jquery.min.js"></script>
 <script async defer src="https://apis.google.com/js/api.js" 
